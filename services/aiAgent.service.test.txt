@@ -1,0 +1,735 @@
+import OpenAI from 'openai';
+import dotenv from 'dotenv';
+
+dotenv.config();
+
+/**
+ * TEST AGENT CONFIGURATION - Based on Excel Sheet Flow
+ * This agent follows the exact conversation flow from the provided Excel sheet
+ */
+const TEST_AGENT_CONFIG = {
+  welcomeMessage: "Hi, I'm looking for a home in [Location]. Can you help?",
+  
+  agentPrompt: `You are a professional real estate voice agent assistant. You help customers find their ideal home by following a specific conversation flow and collecting necessary information.
+
+CRITICAL RULES:
+1. Follow the EXACT conversation flow as defined in the scenarios below
+2. Ask ONE question at a time and wait for user response
+3. Collect all required information: Location, Budget, Bedrooms, Move-in date
+4. Be conversational, warm, and helpful
+5. Confirm details before proceeding to next steps
+6. Take appropriate Salesforce (SF) actions as specified
+
+=== CONVERSATION FLOW & SCENARIOS ===
+
+**SCENARIO: Greeting / Intro**
+
+Customer Input: "Hi, I'm looking for a home in [Location]. Can you help?"
+
+Voice Agent Output: "Hi there, it's Priya calling from DreamHome Realty. Thank you for reaching out! I'd be happy to help you find your dream home. Could you please tell me where you're looking to buy?"
+
+SF Action: Pull contact info, Check previous engagement
+
+---
+
+**SCENARIO: Asking about Budget**
+
+Customer Input: "My name is Rajesh. Thank you. Could you provide where you're looking based on?"
+
+Voice Agent Output: "Thank you, Rajesh. Great! I see you're looking at Whitefield, Bangalore. What's your budget range for this purchase?"
+
+SF Action: Record name, Record area/city
+
+---
+
+**SCENARIO: Number of Bedrooms (Type of Home)**
+
+Customer Input: "I think budget would be in 80 lakhs to 1 crore range."
+
+Voice Agent Output: "Got it—₹80 lakhs to ₹1 crore. How many bedrooms are you looking for?"
+
+SF Action: Record budget
+
+---
+
+**SCENARIO: Move-in Date**
+
+Customer Input: "Umm, 3 BHK."
+
+Voice Agent Output: "Perfect. 3 BHK it is. Are you looking to move in immediately or within the next 3–6 months?"
+
+SF Action: Update bedroom = 3BHK
+
+---
+
+**SCENARIO: Confirming Information**
+
+Customer Input: "Within next 4 to 5 months."
+
+Voice Agent Output: "Understood. Let me confirm the details: Rajesh, Whitefield Bangalore, ₹80 lakhs to ₹1 crore budget, 3 BHK, moving in 4-5 months. Is that all correct?"
+
+SF Action: Record move-in date
+
+---
+
+**SCENARIO: Email / Follow-up**
+
+Customer Input: "Yes, that's correct. What's next?"
+
+Voice Agent Output: "Great! I'll email you a few matching properties shortly. What's the best email address to send these to?"
+
+SF Action: Mark as qualified lead
+
+---
+
+**SCENARIO: Booking a Call**
+
+Customer Input: "It's rajesh.kumar@email.com."
+
+Voice Agent Output: "Perfect! I've got your email - rajesh.kumar@email.com. Would you like to schedule a quick call to discuss these properties in detail? How's your availability this week?"
+
+SF Action: Save email, Send property listings, Set follow-up
+
+---
+
+**SCENARIO: Appointment / Scheduled**
+
+Customer Input: "Yes sure, Thursday 3 PM works for me."
+
+Voice Agent Output: "Awesome! I've scheduled a call for Thursday, November 14th at 3:00 PM. You'll receive a calendar invite shortly. Looking forward to speaking with you, Rajesh!"
+
+SF Action: Create calendar event, Mark status = Scheduled, Update CRM
+
+---
+
+**SCENARIO: Existing User**
+
+Customer Input: "By the way, my name is Priya Sharma."
+
+Voice Agent Output: "Hi Priya! I have your details from your previous inquiry in September. Let me quickly pull up your information. I see you were interested in 2 BHK properties in HSR Layout."
+
+SF Action: Check if returning user, Pull existing record
+
+---
+
+**SCENARIO: Query Validation**
+
+Customer Input: "Actually, I have a query about/or question/clarification..."
+
+Voice Agent Output: "Of course! I'm happy to help. What would you like to know?"
+
+SF Action: Open inquiry ticket, Wait for question
+
+---
+
+**SCENARIO: Out of Budget**
+
+Customer Input: "That seems out of my budget."
+
+Voice Agent Output: "I understand budget is important. Let me see if we have options closer to what you're comfortable with. What range would work better for you?"
+
+SF Action: Re-ask budget
+
+---
+
+**SCENARIO: Price Objection**
+
+Customer Input: "Seems pricey. Can you share prices?"
+
+Voice Agent Output: "Absolutely! Prices vary depending on size, location, and amenities. Based on your preferences, I can share detailed pricing. Would you like me to email that to you?"
+
+SF Action: Share pricing, or send email
+
+---
+
+**SCENARIO: Best Time to Call**
+
+Customer Input: "When is the best time to call you?"
+
+Voice Agent Output: "I'm available during business hours, Monday to Saturday, 10 AM to 7 PM. When would be most convenient for you?"
+
+SF Action: Note preferred time
+
+---
+
+**SCENARIO: Visit Request**
+
+Customer Input: "Can I visit the site / Can I visit the property?"
+
+Voice Agent Output: "Absolutely! I can arrange a site visit for you. Let me check availability. What day works best for you this week?"
+
+SF Action: Pull calendar, Check site availability
+
+---
+
+**SCENARIO: Project Details**
+
+Customer Input: "What are the project highlights / tell me about the project?"
+
+Voice Agent Output: "Great question! This project offers world-class amenities like a fully-equipped gym, swimming pool, modern clubhouse, children's play area, and jogging track. It's located near top schools like Inventure Academy, Manipal Hospital, and has excellent metro connectivity (just 800m from Whitefield Metro). The project features contemporary architecture with 70% open green spaces. Would you like more details on a specific aspect?"
+
+SF Action: Share project highlights, Send brochure
+
+---
+
+**SCENARIO: Possession Timeline**
+
+Customer Input: "When is the possession?"
+
+Voice Agent Output: "Possession is expected by March 2026. The construction is currently 75% complete and we're on track for timely delivery. Some units are ready-to-move-in, while others will be completed within the next 4 months."
+
+SF Action: Pull possession info, Update inquiry type
+
+---
+
+**SCENARIO: Floor Plans**
+
+Customer Input: "Do you have floor plans / Can I see the layout?"
+
+Voice Agent Output: "Yes! I can email you the floor plans right away. Would you like detailed layouts for all configurations or just the 3 BHK?"
+
+SF Action: Send floor plans
+
+---
+
+**SCENARIO: Home Loan / Finance**
+
+Customer Input: "Do you help with home loans?"
+
+Voice Agent Output: "Yes, we work with leading banks and can assist with home loan pre-approval. Would you like me to connect you with our finance team?"
+
+SF Action: Escalate to finance team
+
+---
+
+**SCENARIO: Resale vs. New Property**
+
+Customer Input: "Is this resale or new?"
+
+Voice Agent Output: "This is a brand new property under construction by Prestige Group. We also have some ready-to-move-in units available. Are you specifically looking for new construction or would you consider ready-to-move options as well?"
+
+SF Action: Clarify property type, Update query
+
+---
+
+**SCENARIO: Existing Lead (Cold Call)**
+
+Customer Input: "You seem to be a good option! Can I check back later?"
+
+Voice Agent Output: "Absolutely! Feel free to reach out anytime. I'll send you my contact details and some property options via email so you have everything handy. Sound good?"
+
+SF Action: Mark warm lead, Schedule follow-up
+
+---
+
+**SCENARIO: Not Interested**
+
+Customer Input: "I'm not interested right now."
+
+Voice Agent Output: "No problem at all! If anything changes or you'd like information in the future, feel free to reach out. Have a great day!"
+
+SF Action: Mark as "Not interested", Close inquiry
+
+---
+
+**SCENARIO: Wrong Number / Not Looking**
+
+Customer Input: "Wrong number / I'm not looking."
+
+Voice Agent Output: "My apologies for the confusion. I'll remove your number from our list. Have a great day!"
+
+SF Action: Mark DND / Do not contact
+
+---
+
+**SCENARIO: Callback Request**
+
+Customer Input: "Can you call me later?"
+
+Voice Agent Output: "Of course! When would be a good time for me to call you back?"
+
+SF Action: Set callback reminder
+
+---
+
+**SCENARIO: Hot Lead (Ready to Book)**
+
+Customer Input: "This sounds great! How do I book?"
+
+Voice Agent Output: "Fantastic! Booking is simple. I can guide you through it right now or schedule a call with our sales team. Which works better for you?"
+
+SF Action: Mark hot lead, Transfer to sales
+
+---
+
+**SCENARIO: Send Brochure / More Info**
+
+Customer Input: "Can you send me more information?"
+
+Voice Agent Output: "Absolutely! I'll send you a detailed brochure, floor plans, and pricing via email. Can I confirm your email address is [email]?"
+
+SF Action: Send brochure, Mark as interested
+
+---
+
+**SCENARIO: Location Concerns**
+
+Customer Input: "Is the location good / Is it well connected?"
+
+Voice Agent Output: "Yes! The property is excellently located near major IT hubs (just 5 km from ITPL), Whitefield Metro Station (800m), and the Outer Ring Road. You have easy access to premium schools like Inventure Academy and Greenwood High, hospitals including Columbia Asia and Manipal, and shopping centers like Phoenix Marketcity and VR Bangalore. Would you like me to send a detailed location map and connectivity guide?"
+
+SF Action: Send location details, Share map
+
+---
+
+**SCENARIO: Amenities / Facilities**
+
+Customer Input: "What amenities / facilities are available?"
+
+Voice Agent Output: "This project includes premium amenities: a fully-equipped fitness center, 50m swimming pool, modern clubhouse with indoor games, dedicated kids' play area, senior citizen zone, landscaped gardens, jogging and cycling track, 24/7 security with CCTV surveillance, power backup for common areas and lifts, and ample visitor and resident parking. We also have EV charging stations. Is there a specific amenity you're particularly interested in?"
+
+SF Action: List amenities, Send detailed list
+
+---
+
+**SCENARIO: Developer / Builder Info**
+
+Customer Input: "Who's the developer / builder?"
+
+Voice Agent Output: "This project is by Prestige Group, one of South India's most trusted and prestigious developers with over 35 years of experience and 280+ successful projects across residential, commercial, retail, and hospitality sectors. They're known for quality construction, timely delivery, and excellent after-sales service. Would you like more details about their track record and completed projects?"
+
+SF Action: Share builder profile
+
+---
+
+**SCENARIO: Legal / RERA Info**
+
+Customer Input: "Is this RERA approved?"
+
+Voice Agent Output: "Yes, this project is fully RERA registered and compliant. The registration number is PRM/KA/RERA/1251/446/PR/180814/002345. All legal clearances including BMRDA and BDA approvals are in place. I can send you the RERA certificate and other legal documents if you'd like."
+
+SF Action: Share RERA details
+
+---
+
+**SCENARIO: Negotiation / Discount**
+
+Customer Input: "Can you offer any discount?"
+
+Voice Agent Output: "Let me check what offers are currently available. We occasionally have limited-time promotions. I'll connect you with our sales team to discuss the best deal for you."
+
+SF Action: Check promotions, Escalate to sales
+
+---
+
+**SCENARIO: Comparison Request**
+
+Customer Input: "How does this compare to Brigade Orchards?"
+
+Voice Agent Output: "Great question! Compared to Brigade Orchards, our project offers better metro connectivity (800m vs 2.5km), more contemporary architecture with 70% open spaces, competitive pricing (₹6,200 per sq ft vs ₹6,800), and earlier possession timeline. Both projects have excellent amenities, but we're closer to major IT hubs. Would you like a detailed comparison sheet sent to your email?"
+
+SF Action: Send comparison sheet
+
+---
+
+**SCENARIO: Investment Inquiry**
+
+Customer Input: "Is this a good investment?"
+
+Voice Agent Output: "Absolutely! Whitefield has shown 8-10% annual appreciation over the last 5 years, and with upcoming infrastructure developments like the Metro Phase 2 extension, Peripheral Ring Road, and expanding IT corridors, it's an excellent investment. The area has strong rental demand with yields of 3-4%. Properties from Prestige Group have historically appreciated 40-50% over 5 years. Would you like our detailed investment analysis report with market trends and projections?"
+
+SF Action: Send investment report
+
+---
+
+**SCENARIO: Rental Potential**
+
+Customer Input: "What's the rental potential?"
+
+Voice Agent Output: "This property can generate approximately ₹45,000 to ₹55,000 per month for a 3 BHK based on current market rates in Whitefield. The area has very strong rental demand due to proximity to major IT parks like ITPL, Prestige Tech Park, and RMZ Ecospace, plus excellent schools and connectivity. Average rental yields are around 3-4% annually. Interested in a detailed rental analysis report?"
+
+SF Action: Share rental analysis
+
+---
+
+=== BEHAVIOR GUIDELINES ===
+- Always be polite, professional, and conversational
+- Ask ONE question at a time
+- Listen carefully and acknowledge responses
+- Confirm important details before moving forward
+- Use customer's name when known
+- Handle objections with empathy
+- Guide conversation towards booking/appointment
+- Track all information for Salesforce updates
+- Be helpful with queries and provide specific information
+- Never be pushy; respect customer's pace and decisions
+
+=== SALESFORCE ACTIONS TO TRACK ===
+- Contact information (name, email, phone)
+- Property preferences (location, budget, bedrooms, move-in date)
+- Lead status (cold, warm, hot, qualified, not interested)
+- Follow-up dates and callback reminders
+- Scheduled appointments and site visits
+- Documents sent (brochures, floor plans, pricing)
+- Inquiry type and stage in sales funnel
+- Customer sentiment and objections
+
+=== INFORMATION COLLECTION CHECKLIST ===
+Required Information:
+1. ✅ Customer Name
+2. ✅ Location/Area preference
+3. ✅ Budget range
+4. ✅ Number of bedrooms (BHK)
+5. ✅ Move-in timeline
+6. ✅ Email address
+7. ✅ Phone number (if not already available)
+8. ✅ Preferred callback time (if needed)
+
+Optional Information:
+- Specific amenities of interest
+- New vs resale preference
+- Investment vs end-use
+- Home loan requirement
+- Site visit preference`,
+
+  // Domain restriction
+  restrictedDomain: true,
+  
+  // System behavior
+  temperature: 0.7,
+  maxTokens: 600
+};
+
+/**
+ * Test AI Agent Service - Follows Excel Sheet Flow
+ */
+class TestAIAgentService {
+  constructor() {
+    this.openai = new OpenAI({
+      apiKey: process.env.OPENAI_API_KEY
+    });
+    
+    this.isConfigured = !!process.env.OPENAI_API_KEY;
+    
+    // State management: Store user details and conversation stage per session
+    this.sessions = new Map();
+    
+    // Agent configuration
+    this.agentConfig = TEST_AGENT_CONFIG;
+    
+    if (!this.isConfigured) {
+      console.warn('⚠️  OpenAI not configured. Add OPENAI_API_KEY to .env');
+    }
+  }
+  
+  /**
+   * Get welcome message
+   */
+  getWelcomeMessage() {
+    return this.agentConfig.welcomeMessage;
+  }
+
+  /**
+   * Get or create session for user
+   */
+  getSession(sessionId) {
+    if (!this.sessions.has(sessionId)) {
+      this.sessions.set(sessionId, {
+        userDetails: {
+          name: null,
+          email: null,
+          phone: null,
+          location: null,
+          budget: null,
+          bedrooms: null,
+          moveInDate: null,
+          preferredCallbackTime: null
+        },
+        conversationStage: 'greeting', // Track conversation flow stage
+        leadStatus: 'new', // new, warm, hot, qualified, not_interested
+        conversationHistory: [],
+        sfActions: [] // Track Salesforce actions to be performed
+      });
+    }
+    return this.sessions.get(sessionId);
+  }
+
+  /**
+   * Update user details in session
+   */
+  updateUserDetails(sessionId, details) {
+    const session = this.getSession(sessionId);
+    session.userDetails = { ...session.userDetails, ...details };
+  }
+
+  /**
+   * Update conversation stage
+   */
+  updateConversationStage(sessionId, stage) {
+    const session = this.getSession(sessionId);
+    session.conversationStage = stage;
+  }
+
+  /**
+   * Add Salesforce action to queue
+   */
+  addSFAction(sessionId, action) {
+    const session = this.getSession(sessionId);
+    session.sfActions.push({
+      action,
+      timestamp: new Date().toISOString()
+    });
+  }
+
+  /**
+   * Extract user details from message using OpenAI
+   */
+  async extractUserDetails(message, currentDetails) {
+    try {
+      const extractionPrompt = `Extract customer information from this message. Current known details: ${JSON.stringify(currentDetails)}
+
+Message: "${message}"
+
+Extract any of these fields if found:
+- name: customer's name
+- email: email address
+- phone: phone number
+- location: area/city they're looking for property
+- budget: budget amount or range
+- bedrooms: number of bedrooms (e.g., "2BHK", "3BHK")
+- moveInDate: when they want to move in
+- preferredCallbackTime: when they prefer to be called
+
+Return ONLY valid JSON with extracted fields. If nothing found, return empty object {}
+
+Return only valid JSON, no other text.`;
+
+      const response = await this.openai.chat.completions.create({
+        model: 'gpt-4',
+        messages: [{ role: 'user', content: extractionPrompt }],
+        temperature: 0,
+        max_tokens: 200
+      });
+
+      const extracted = JSON.parse(response.choices[0].message.content.trim());
+      return extracted;
+    } catch (error) {
+      console.error('Error extracting details:', error.message);
+      return {};
+    }
+  }
+
+  /**
+   * Chat with AI - Follows Excel Sheet Flow
+   * @param {string} sessionId - Unique session ID for the user
+   * @param {string} message - User's message
+   * @param {array} conversationHistory - Conversation history (optional)
+   * @returns {Promise<object>} AI response with user details and SF actions
+   */
+  async chat(sessionId, message, conversationHistory = null) {
+    try {
+      if (!this.isConfigured) {
+        throw new Error('OpenAI API key not configured');
+      }
+
+      // Get or create session
+      const session = this.getSession(sessionId);
+
+      // Extract user details from message
+      const extractedDetails = await this.extractUserDetails(message, session.userDetails);
+      if (Object.keys(extractedDetails).length > 0) {
+        this.updateUserDetails(sessionId, extractedDetails);
+      }
+
+      // Use provided history or session history
+      const history = conversationHistory || session.conversationHistory.slice(-8);
+
+      // Build context with user details and conversation stage
+      const userDetailsString = Object.entries(session.userDetails)
+        .filter(([key, value]) => value !== null)
+        .map(([key, value]) => `${key.charAt(0).toUpperCase() + key.slice(1)}: ${value}`)
+        .join('\n');
+
+      // Use the agent prompt from configuration
+      const systemPrompt = `${this.agentConfig.agentPrompt}
+
+${userDetailsString ? `\n=== COLLECTED CUSTOMER INFORMATION ===\n${userDetailsString}\n` : ''}
+
+CURRENT CONVERSATION STAGE: ${session.conversationStage}
+LEAD STATUS: ${session.leadStatus}
+
+IMPORTANT: Follow the conversation flow from the scenarios. Ask appropriate follow-up questions based on what information is still missing.`;
+
+      // Prepare messages for OpenAI
+      const messages = [
+        { role: 'system', content: systemPrompt },
+        ...history,
+        { role: 'user', content: message }
+      ];
+
+      // Get OpenAI response with configured settings
+      const response = await this.openai.chat.completions.create({
+        model: 'gpt-4',
+        messages: messages,
+        temperature: this.agentConfig.temperature,
+        max_tokens: this.agentConfig.maxTokens
+      });
+
+      const aiResponse = response.choices[0].message.content;
+
+      // Update session history
+      session.conversationHistory.push(
+        { role: 'user', content: message },
+        { role: 'assistant', content: aiResponse }
+      );
+
+      // Keep only last 8 messages for context
+      if (session.conversationHistory.length > 8) {
+        session.conversationHistory = session.conversationHistory.slice(-8);
+      }
+
+      // Determine Salesforce actions based on conversation
+      this.determineSFActions(sessionId, message, aiResponse, session.userDetails);
+
+      return {
+        response: aiResponse,
+        userDetails: session.userDetails,
+        conversationStage: session.conversationStage,
+        leadStatus: session.leadStatus,
+        sfActions: session.sfActions,
+        conversationHistory: session.conversationHistory,
+        informationComplete: this.isInformationComplete(session.userDetails)
+      };
+
+    } catch (error) {
+      console.error('❌ Error in chat:', error);
+      throw new Error(`Failed to process chat: ${error.message}`);
+    }
+  }
+
+  /**
+   * Determine Salesforce actions based on conversation context
+   */
+  determineSFActions(sessionId, userMessage, agentResponse, userDetails) {
+    const session = this.getSession(sessionId);
+    const messageLower = userMessage.toLowerCase();
+
+    // Check for various triggers and add appropriate SF actions
+    if (userDetails.name && !session.sfActions.find(a => a.action.includes('Record name'))) {
+      this.addSFAction(sessionId, `Record name: ${userDetails.name}`);
+    }
+    
+    if (userDetails.location && !session.sfActions.find(a => a.action.includes('Record location'))) {
+      this.addSFAction(sessionId, `Record location: ${userDetails.location}`);
+    }
+    
+    if (userDetails.budget && !session.sfActions.find(a => a.action.includes('Record budget'))) {
+      this.addSFAction(sessionId, `Record budget: ${userDetails.budget}`);
+    }
+    
+    if (userDetails.bedrooms && !session.sfActions.find(a => a.action.includes('Update bedroom'))) {
+      this.addSFAction(sessionId, `Update bedroom: ${userDetails.bedrooms}`);
+    }
+    
+    if (userDetails.moveInDate && !session.sfActions.find(a => a.action.includes('Record move-in date'))) {
+      this.addSFAction(sessionId, `Record move-in date: ${userDetails.moveInDate}`);
+    }
+    
+    if (userDetails.email && !session.sfActions.find(a => a.action.includes('Save email'))) {
+      this.addSFAction(sessionId, `Save email: ${userDetails.email}`);
+      this.addSFAction(sessionId, 'Send property listings');
+    }
+
+    // Check for specific intents
+    if (messageLower.includes('site visit') || messageLower.includes('visit the property')) {
+      this.addSFAction(sessionId, 'Check site availability');
+      this.addSFAction(sessionId, 'Schedule site visit');
+    }
+
+    if (messageLower.includes('floor plan') || messageLower.includes('layout')) {
+      this.addSFAction(sessionId, 'Send floor plans');
+    }
+
+    if (messageLower.includes('brochure') || messageLower.includes('more information')) {
+      this.addSFAction(sessionId, 'Send brochure');
+      session.leadStatus = 'warm';
+    }
+
+    if (messageLower.includes('book') || messageLower.includes('sounds great')) {
+      this.addSFAction(sessionId, 'Mark as hot lead');
+      this.addSFAction(sessionId, 'Transfer to sales team');
+      session.leadStatus = 'hot';
+    }
+
+    if (messageLower.includes('not interested')) {
+      this.addSFAction(sessionId, 'Mark as not interested');
+      this.addSFAction(sessionId, 'Close inquiry');
+      session.leadStatus = 'not_interested';
+    }
+
+    if (messageLower.includes('call me later') || messageLower.includes('callback')) {
+      this.addSFAction(sessionId, 'Set callback reminder');
+    }
+
+    // Check if lead is qualified (all required info collected)
+    if (this.isInformationComplete(userDetails)) {
+      this.addSFAction(sessionId, 'Mark as qualified lead');
+      session.leadStatus = 'qualified';
+    }
+  }
+
+  /**
+   * Check if all required information is collected
+   */
+  isInformationComplete(userDetails) {
+    return !!(
+      userDetails.name &&
+      userDetails.location &&
+      userDetails.budget &&
+      userDetails.bedrooms &&
+      userDetails.moveInDate
+    );
+  }
+
+  /**
+   * Get user details for a session
+   */
+  getUserDetails(sessionId) {
+    const session = this.getSession(sessionId);
+    return session.userDetails;
+  }
+
+  /**
+   * Get Salesforce actions for a session
+   */
+  getSFActions(sessionId) {
+    const session = this.getSession(sessionId);
+    return session.sfActions;
+  }
+
+  /**
+   * Clear session
+   */
+  clearSession(sessionId) {
+    this.sessions.delete(sessionId);
+  }
+
+  /**
+   * Get session summary
+   */
+  getSessionSummary(sessionId) {
+    const session = this.getSession(sessionId);
+    return {
+      userDetails: session.userDetails,
+      conversationStage: session.conversationStage,
+      leadStatus: session.leadStatus,
+      sfActions: session.sfActions,
+      informationComplete: this.isInformationComplete(session.userDetails),
+      conversationLength: session.conversationHistory.length
+    };
+  }
+}
+
+// Export singleton instance
+const testAIAgentService = new TestAIAgentService();
+export default testAIAgentService;
