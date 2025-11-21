@@ -2,6 +2,7 @@ import express from 'express';
 import cors from 'cors';
 import dotenv from 'dotenv';
 import aiAgentService from './services/aiAgent.service.js';
+import { loadPDFtoPinecone } from "./services/pineconeLoader.js";
 
 dotenv.config();
 
@@ -13,6 +14,13 @@ app.use(cors());
 app.use(express.json());
 
 // API Routes
+
+app.listen(PORT, async () => {
+  console.log(`🚀 Server running on http://localhost:${PORT}`);
+  console.log('✅ Minimal chat API ready');
+  await loadPDFtoPinecone();
+  console.log("📌 KB Loaded into Pinecone");
+});
 
 // Health check
 app.get('/api/health', (req, res) => {
@@ -176,7 +184,4 @@ app.use((error, req, res, next) => {
   });
 });
 
-app.listen(PORT, () => {
-  console.log(`🚀 Server running on http://localhost:${PORT}`);
-  console.log('✅ Minimal chat API ready');
-});
+
